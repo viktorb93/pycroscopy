@@ -13,12 +13,8 @@ import numpy as np
 from scipy.optimize import leastsq
 from scipy.signal import blackman
 from sklearn.utils import gen_batches
+import pyUSID as usid
 
-from ..core.io.pycro_data import PycroDataset
-from ..core.io.hdf_utils import find_results_groups, check_for_old, Dimension, create_indexed_group, \
-    write_main_dataset, write_simple_attrs
-from ..core.io.io_utils import get_available_memory
-from ..core.io.write_utils import make_indices_matrix, calc_chunks
 from .svd_utils import get_component_slice
 
 windata32 = np.dtype({'names': ['Image Data'],
@@ -43,7 +39,7 @@ class ImageWindow(object):
 
         Parameters
         ----------
-        h5_main : PycroDataset
+        h5_main : usid.USIDataset
             Dataset containing the data to be windowed
         max_RAM_mb : int, optional
             integer maximum amount of ram, in Mb, to use in windowing
@@ -66,7 +62,7 @@ class ImageWindow(object):
             cores = max_cores
         self.cores = int(cores)
 
-        self.max_memory = min(max_RAM_mb * 1024 ** 2, 0.75 * get_available_memory())
+        self.max_memory = min(max_RAM_mb * 1024 ** 2, 0.75 * usid.io_utils.get_available_memory())
         if self.cores != 1:
             self.max_memory = int(self.max_memory / 2)
 
@@ -196,7 +192,7 @@ class ImageWindow(object):
 
         self.h5_wins = h5_wins
 
-        return USIDataset(h5_wins)
+        return usid.USIDataset(h5_wins)
 
     @staticmethod
     def _check_win_parameters(h5_main, win_step_x, win_step_y, win_x, win_y):
@@ -306,7 +302,7 @@ class ImageWindow(object):
         '''
         Calculate the chunk size
         '''
-        win_chunks = calc_chunks([n_wins, win_pix], win_type.itemsize, unit_chunks=[1, win_pix])
+        win_chunks = usid.write_utils.calc_chunks([n_wins, win_pix], win_type.itemsize, unit_chunks=[1, win_pix])
 
         parent = h5_main.parent
 
@@ -319,7 +315,7 @@ class ImageWindow(object):
                             'image_x': im_x,
                             'image_y': im_y}
 
-        old_group = check_for_old(h5_main, '-Windowing', check_parameters)
+        old_group = usid.hdf_utils.check_for_old(h5_main, '-Windowing', check_parameters)
 
         if len(old_group) > 0:
             old_group = old_group[-1]
@@ -331,14 +327,14 @@ class ImageWindow(object):
             '''
             Create the Windows Dataset and Datagroup
             '''
-            h5_grp = create_indexed_group(parent, 'Windowing')
-            write_simple_attrs(h5_grp, check_parameters)
+            h5_grp = usid.hdf_utils.create_indexed_group(parent, 'Windowing')
+            usid.hdf_utils.write_simple_attrs(h5_grp, check_parameters)
 
-            h5_wins = write_main_dataset(h5_grp, (n_wins, win_pix), 'Image_Windows',
-                                         'Intensity', 'a.u.',
-                                         pos_dims, spec_dims,
-                                         dtype=win_type,
-                                         chunks=win_chunks)
+            h5_wins = usid.hdf_utils.write_main_dataset(h5_grp, (n_wins, win_pix), 'Image_Windows', 
+                                                        'Intensity', 'a.u.',
+                                                        pos_dims, spec_dims,
+                                                        dtype=win_type,
+                                                        chunks=win_chunks)
 
             self.h5_file.flush()
 
@@ -386,10 +382,10 @@ class ImageWindow(object):
         '''
         Set up the HDF5 Group and Datasets for the windowed data
         '''
-        pos_dims = [Dimension('Window Origin X', 'pixel', x_steps),
-                    Dimension('Window Origin Y', 'pixel', y_steps)]
-        spec_dims = [Dimension('U', 'pixel', win_u),
-                     Dimension('V', 'pixel', win_v)]
+        pos_dims = [usid.hdf_utils.Dimension('Window Origin X', 'pixel', x_steps),
+                    usid.hdf_utils.Dimension('Window Origin Y', 'pixel', y_steps)]
+        spec_dims = [usid.hdf_utils.Dimension('U', 'pixel', win_u),
+                     usid.hdf_utils.Dimension('V', 'pixel', win_v)]
 
         return pos_dims, spec_dims, win_pos_mat
 
@@ -482,265 +478,6 @@ class ImageWindow(object):
 
         return windows
 
-    # def build_clean_image(self, h5_win=None):
-    #     """
-    #     Reconstructs the cleaned image from the windowed dataset
-    #
-    #     Parameters
-    #     ----------
-    #     h5_win : HDF5 dataset , optional
-    #         The windowed image to be reconstructed.
-    #
-    #     Returns
-    #     -------
-    #     h5_clean : HDF5 dataset
-    #         The cleaned image
-    #
-    #     """
-    #     if h5_win is None:
-    #         if self.clean_wins is None:
-    #             warn('You must clean the image before rebuilding it.')
-    #             return
-    #         h5_win = self.clean_wins
-    #
-    #     '''
-    #     Get basic windowing information from attributes of
-    #     h5_win
-    #     '''
-    #     im_x = h5_win.parent.attrs['image_x']
-    #     im_y = h5_win.parent.attrs['image_y']
-    #     win_x = h5_win.parent.attrs['win_x']
-    #     win_y = h5_win.parent.attrs['win_y']
-    #     win_step_x = h5_win.parent.attrs['win_step_x']
-    #     win_step_y = h5_win.parent.attrs['win_step_x']
-    #
-    #     '''
-    #     Calculate the steps taken to create original windows
-    #     '''
-    #     x_steps = np.arange(0, im_x - win_x + 1, win_step_x)
-    #     y_steps = np.arange(0, im_y - win_y + 1, win_step_y)
-    #
-    #     '''
-    #     Initialize arrays to hold summed windows and counts for each position
-    #     '''
-    #     counts = np.zeros([im_x, im_y], np.uint8)
-    #     accum = np.zeros([im_x, im_y], np.float32)
-    #
-    #     nx = len(x_steps)
-    #     ny = len(y_steps)
-    #     n_wins = nx * ny
-    #
-    #     '''
-    #     Create slice object from the positions
-    #     '''
-    #     win_slices = [[slice(x, x + win_x), slice(y, y + win_y)] for x, y in np.array([np.tile(x_steps, nx),
-    #                                                                                    np.repeat(y_steps, ny)]).T]
-    #
-    #     '''
-    #     Loop over all windows.  Increment counts for window positions and
-    #     add current window to total.
-    #     '''
-    #     ones = np.ones([win_x, win_y], dtype=counts.dtype)
-    #     for islice, this_slice in enumerate(win_slices):
-    #         selected = islice % np.rint(n_wins / 10) == 0
-    #         if selected:
-    #             per_done = np.rint(100 * islice / n_wins)
-    #             print('Reconstructing Image...{}% -- step # {}'.format(per_done, islice))
-    #         counts[this_slice] += ones
-    #
-    #         accum[this_slice] += h5_win[islice].reshape(win_x, win_y)
-    #
-    #     clean_image = accum / counts
-    #
-    #     clean_image[np.isnan(clean_image)] = 0
-    #
-    #     clean_grp = VirtualGroup('Cleaned_Image', h5_win.parent.name[1:])
-    #
-    #     ds_clean = VirtualDataset('Cleaned_Image', clean_image)
-    #
-    #     clean_grp.add_children([ds_clean])
-    #
-    #     image_refs = self.h5_file.write(clean_grp)
-    #     self.h5_file.flush()
-    #
-    #     h5_clean = get_h5_obj_refs(['Cleaned_Image'], image_refs)[0]
-    #
-    #     self.h5_clean = h5_clean
-    #
-    #     return h5_clean
-    #
-    # def clean_and_build_batch(self, h5_win=None, components=None):
-    #     """
-    #     Rebuild the Image from the SVD results on the windows
-    #     Optionally, only use components less than n_comp.
-    #
-    #     Parameters
-    #     ----------
-    #     h5_win : hdf5 Dataset, optional
-    #         dataset containing the windowed image which SVD was performed on
-    #     components : {int, iterable of int, slice} optional
-    #         Defines which components to keep
-    #         Default - None, all components kept
-    #
-    #         Input Types
-    #         integer : Components less than the input will be kept
-    #         length 2 iterable of integers : Integers define start and stop of component slice to retain
-    #         other iterable of integers or slice : Selection of component indices to retain
-    #
-    #     Returns
-    #     -------
-    #     clean_wins : HDF5 Dataset
-    #         the cleaned windows
-    #
-    #     """
-    #
-    #     if h5_win is None:
-    #         if self.h5_wins is None:
-    #             warn('You must perform windowing on an image followed by SVD on the window before you can clean it.')
-    #             return
-    #         h5_win = self.h5_wins
-    #     elif 'Image Data' not in h5_win.dtype.names:
-    #         warn('The windows must have the real space image data in them to rebuild.')
-    #         return
-    #
-    #     print('Cleaning the image by removing unwanted components.')
-    #
-    #     comp_slice = get_component_slice(components)
-    #
-    #     '''
-    #     Read the 1st n_comp components from the SVD results
-    #     on h5_win
-    #     '''
-    #     win_name = h5_win.name.split('/')[-1]
-    #
-    #     try:
-    #         win_svd = find_results_groups(h5_win, 'SVD')[-1]
-    #
-    #         h5_S = win_svd['S']
-    #         h5_U = win_svd['U']
-    #         h5_V = win_svd['V']
-    #
-    #     except KeyError:
-    #         warnstring = 'SVD Results for {dset} were not found in {file}.'.format(dset=win_name, file=self.image_path)
-    #         warn(warnstring)
-    #         return
-    #     except:
-    #         raise
-    #
-    #     '''
-    #     Get basic windowing information from attributes of
-    #     h5_win
-    #     '''
-    #     im_x = h5_win.parent.attrs['image_x']
-    #     im_y = h5_win.parent.attrs['image_y']
-    #     win_x = h5_win.parent.attrs['win_x']
-    #     win_y = h5_win.parent.attrs['win_y']
-    #
-    #     '''
-    #     Initialize arrays to hold summed windows and counts for each position
-    #     '''
-    #     counts = np.zeros([im_x, im_y], np.uint32)
-    #     accum = np.zeros([im_x, im_y], np.float32)
-    #
-    #     '''
-    #     Create slice object from the positions
-    #     '''
-    #     ds_win_pos = h5_win.file[h5_win.attrs['Position_Indices']][()]
-    #     win_slices = [[slice(x, x + win_x), slice(y, y + win_y)] for x, y in ds_win_pos]
-    #     n_wins = ds_win_pos.shape[0]
-    #     '''
-    #     Create a matrix to add when counting.
-    #     h5_V is usually small so go ahead and take S.V
-    #     '''
-    #     ones = np.ones([win_x, win_y], dtype=counts.dtype)
-    #     ds_V = np.dot(np.diag(h5_S[comp_slice]), h5_V['Image Data'][comp_slice, :])
-    #
-    #     '''
-    #     Calculate the size of a given batch that will fit in the available memory
-    #     '''
-    #     mem_per_win = ds_V.itemsize * ds_V.shape[1]
-    #     if self.cores is None:
-    #         free_mem = self.max_memory - ds_V.size * ds_V.itemsize
-    #     else:
-    #         free_mem = self.max_memory * 2 - ds_V.size * ds_V.itemsize
-    #     batch_size = int(free_mem / mem_per_win)
-    #     batch_slices = gen_batches(n_wins, batch_size)
-    #
-    #     print('Reconstructing in batches of {} windows.'.format(batch_size))
-    #
-    #     '''
-    #     Loop over all batches.  Increment counts for window positions and
-    #     add current window to total.
-    #     '''
-    #     for ibatch, batch in enumerate(batch_slices):
-    #         ds_U = h5_U[batch, comp_slice]
-    #         batch_wins = np.dot(ds_U, ds_V).reshape([-1, win_x, win_y])
-    #         del ds_U
-    #         for islice, this_slice in enumerate(win_slices[batch]):
-    #             iwin = ibatch * batch_size + islice
-    #             if iwin % np.rint(n_wins / 10) == 0:
-    #                 per_done = np.rint(100 * iwin / n_wins)
-    #                 print('Reconstructing Image...{}% -- step # {}'.format(per_done, islice))
-    #
-    #             counts[this_slice] += ones
-    #
-    #             accum[this_slice] += batch_wins[islice]
-    #
-    #     clean_image = np.divide(accum, counts)
-    #
-    #     clean_image[np.isnan(clean_image)] = 0
-    #
-    #     if h5_win.file.attrs['normalized']:
-    #         '''
-    #         Renormalize the cleaned image
-    #         '''
-    #         clean_image -= np.min(clean_image)
-    #         clean_image = clean_image / np.max(clean_image)
-    #
-    #     '''
-    #     Calculate the removed noise and FFTs
-    #     '''
-    #     removed_noise = np.reshape(self.h5_raw, clean_image.shape) - clean_image
-    #     blackman_window_rows = blackman(clean_image.shape[0])
-    #     blackman_window_cols = blackman(clean_image.shape[1])
-    #     fft_clean = np.fft.fft2(blackman_window_rows[:, np.newaxis] * clean_image * blackman_window_cols[np.newaxis, :])
-    #     fft_noise = np.fft.fft2(
-    #         blackman_window_rows[:, np.newaxis] * removed_noise * blackman_window_cols[np.newaxis, :])
-    #
-    #     '''
-    #     Create datasets for results, link them properly, and write them to file
-    #     '''
-    #     clean_grp = VirtualGroup('Cleaned_Image_', win_svd.name[1:])
-    #     ds_clean = VirtualDataset('Cleaned_Image', clean_image.reshape(self.h5_raw.shape))
-    #     ds_noise = VirtualDataset('Removed_Noise', removed_noise.reshape(self.h5_raw.shape))
-    #     ds_fft_clean = VirtualDataset('FFT_Cleaned_Image', fft_clean.reshape(self.h5_raw.shape))
-    #     ds_fft_noise = VirtualDataset('FFT_Removed_Noise', fft_noise.reshape(self.h5_raw.shape))
-    #
-    #     clean_grp.add_children([ds_clean, ds_noise, ds_fft_clean, ds_fft_noise])
-    #
-    #     if isinstance(comp_slice, slice):
-    #         clean_grp.attrs['components_used'] = '{}-{}'.format(comp_slice.start, comp_slice.stop)
-    #     else:
-    #         clean_grp.attrs['components_used'] = comp_slice
-    #
-    #     image_refs = self.h5_file.write(clean_grp)
-    #     self.h5_file.flush()
-    #
-    #     h5_clean = get_h5_obj_refs(['Cleaned_Image'], image_refs)[0]
-    #     h5_noise = get_h5_obj_refs(['Removed_Noise'], image_refs)[0]
-    #     h5_fft_clean = get_h5_obj_refs(['FFT_Cleaned_Image'], image_refs)[0]
-    #     h5_fft_noise = get_h5_obj_refs(['FFT_Removed_Noise'], image_refs)[0]
-    #
-    #     copy_attributes(self.h5_raw, h5_clean, skip_refs=False)
-    #     copy_attributes(self.h5_raw, h5_noise, skip_refs=False)
-    #     copy_attributes(self.h5_raw, h5_fft_clean, skip_refs=False)
-    #     copy_attributes(self.h5_raw, h5_fft_noise, skip_refs=False)
-    #
-    #     self.h5_clean = h5_clean
-    #     self.h5_noise = h5_noise
-    #
-    #     return h5_clean
-
     def clean_and_build_separate_components(self, h5_win=None, components=None):
         """
         Rebuild the Image from the SVD results on the windows
@@ -785,11 +522,11 @@ class ImageWindow(object):
         win_name = h5_win.name.split('/')[-1]
 
         try:
-            win_svd = find_results_groups(h5_win, 'SVD')[-1]
+            win_svd = usid.hdf_utils.find_results_groups(h5_win, 'SVD')[-1]
 
             h5_S = win_svd['S']
-            h5_U = PycroDataset(win_svd['U'])
-            h5_V = PycroDataset(win_svd['V'])
+            h5_U = usid.USIDataset(win_svd['U'])
+            h5_V = usid.USIDataset(win_svd['V'])
 
         except KeyError:
             warnstring = 'SVD Results for {dset} were not found in {file}.'.format(dset=win_name, file=self.image_path)
@@ -868,24 +605,26 @@ class ImageWindow(object):
         '''
         Create datasets for results, link them properly, and write them to file
         '''
-        spec_dims = Dimension('Principal Component', 'a.u.', h5_U.h5_spec_vals[:, comp_slice].flatten())
+        spec_dims = usid.hdf_utils.Dimension('Principal Component', 'a.u.', h5_U.h5_spec_vals[:, comp_slice].flatten())
 
-        clean_grp = create_indexed_group(win_svd.parent, 'Cleaned_Image')
+        clean_grp = usid.hdf_utils.create_indexed_group(win_svd.parent, 'Cleaned_Image')
 
         if isinstance(comp_slice, slice):
             clean_attrs = {'components_used': '{}-{}'.format(comp_slice.start, comp_slice.stop)}
         else:
             clean_attrs = {'components_used': comp_slice}
 
-        write_simple_attrs(clean_grp, clean_attrs)
+        usid.hdf_utils.write_simple_attrs(clean_grp, clean_attrs)
 
-        clean_chunking = calc_chunks([im_x * im_y, num_comps], clean_image.dtype.itemsize)
+        clean_chunking = usid.write_utils.calc_chunks([im_x * im_y, num_comps], clean_image.dtype.itemsize)
 
-        h5_clean = write_main_dataset(clean_grp, clean_image.reshape(im_x * im_y, num_comps), 'Cleaned_Image',
-                                      'Intensity', 'a.u.',
-                                      None, spec_dims,
-                                      h5_pos_inds=self.h5_raw.h5_pos_inds, h5_pos_vals=self.h5_raw.h5_pos_vals,
-                                      chunks=clean_chunking)
+        h5_clean = usid.hdf_utils.write_main_dataset(clean_grp, clean_image.reshape(im_x * im_y, num_comps),
+                                                     'Cleaned_Image',
+                                                     'Intensity', 'a.u.',
+                                                     None, spec_dims,
+                                                     h5_pos_inds=self.h5_raw.h5_pos_inds,
+                                                     h5_pos_vals=self.h5_raw.h5_pos_vals,
+                                                     chunks=clean_chunking)
 
         self.h5_file.flush()
 
