@@ -12,7 +12,8 @@ class PiFMTranslator(Translator):
     structure.
     """
 
-    def translate(self, path, append_path='', grp_name='Measurement'):
+    def translate(self, path, append_path='', grp_name='Measurement', 
+                  overwrite=True, verbose=False):
         """
         Parameters
         ----------
@@ -22,15 +23,22 @@ class PiFMTranslator(Translator):
             Whether or not to show  print statements for debugging
         append_path : string (Optional)
             h5_file to add these data to, must be a path to the h5_file on disk
-        parm_encoding : str, optional
-            Codec to be used to decode the bytestrings into Python strings if needed.
-            Default 'utf-8'
+        grp_name : string (Optional)
+            Change from default "Measurement" name to something specific
+        overwrite : bool (Optional)
+            By default will overwrite an existing .H5 file 
 
         Returns
         -------
         h5_path : String / unicode
             Absolute path of the .h5 file
         """
+        
+        self.verbose = verbose
+        self.overwrite = overwrite
+        self.append_path = append_path
+        self.grp_name = grp_name
+        
         self.get_path(path)
         self.read_anfatec_params()
         self.read_file_desc()
@@ -38,7 +46,7 @@ class PiFMTranslator(Translator):
         self.read_imgs()
         self.read_spectra()
         self.make_pos_vals_inds_dims()
-        self.create_hdf5_file(append_path, grp_name)
+        self.create_hdf5_file()
         self.write_spectrograms()
         self.write_images()
         self.write_spectra()
@@ -184,14 +192,20 @@ class PiFMTranslator(Translator):
                     usid.write_utils.Dimension('Y', self.params_dictionary['YPhysUnit'].replace('\xb5', 'u'), self.y_len)]
         self.pos_ind, self.pos_val, self.pos_dims = pos_ind, pos_val, pos_dims
 
-    def create_hdf5_file(self, append_path='', grp_name='Measurement'):
+    def create_hdf5_file(self):
+        
+        grp_name = self.grp_name
+        append_path = self.append_path
+        
         if not append_path:
             h5_path = os.path.join(self.directory, self.basename.replace('.txt', '.h5'))
             if os.path.exists(h5_path):
-                raise FileExistsError
+                if not self.overwrite:
+                    raise FileExistsError
+                else:
+                    os.remove(h5_path)
             #if file already exists. (maybe there is a better way to check for this)
-            else:
-                self.h5_f = h5py.File(h5_path, mode='w')
+            self.h5_f = h5py.File(h5_path, mode='w')
 
         else:
             if not os.path.exists(append_path):
@@ -232,12 +246,16 @@ class PiFMTranslator(Translator):
                 h5_raw[:, :] = self.spectrograms[spectrogram_f].reshape(h5_raw.shape)
 
     def write_images(self):
+        
+        grp_name = self.grp_name
+        
         if bool(self.img_desc):
             for img_f, descriptors in self.img_desc.items():
                 #check for existing spectrogram or image and link position/spec inds/vals
                 #at most two channels worth of need to be checked
+                
                 try:
-                    str_main = str(usid.hdf_utils.get_all_main(self.h5_f['Measurement_000/Channel_000']))
+                    str_main = str(usid.hdf_utils.get_all_main(self.h5_f[grp_name + '_000/Channel_000']))
                     i_beg = str_main.find('located at: \n\t') + 14
                     i_end = str_main.find('\nData contains') - 1
                     data_loc = str_main[i_beg:i_end]
@@ -252,7 +270,7 @@ class PiFMTranslator(Translator):
                         spec_dims = None
                     #if channel 000 is spectrogram, check next dataset
                     elif channel_data.spec_dim_sizes[0] !=1:
-                        str_main = str(usid.hdf_utils.get_all_main(self.h5_f['Measurement_000/Channel_001']))
+                        str_main = str(usid.hdf_utils.get_all_main(self.h5_f[grp_name + '_000/Channel_001']))
                         i_beg = str_main.find('located at: \n\t') + 14
                         i_end = str_main.find('\nData contains') - 1
                         data_loc = str_main[i_beg:i_end]
@@ -265,6 +283,7 @@ class PiFMTranslator(Translator):
 
                 #in case where channel does not exist, we make new spec/pos inds/vals
                 except KeyError:
+
                     #pos dims
                     h5_pos_inds = None
                     h5_pos_vals = None
@@ -274,7 +293,11 @@ class PiFMTranslator(Translator):
                     h5_spec_inds = None
                     h5_spec_vals = None
                     spec_dims = usid.write_utils.Dimension('arb', 'a.u', 1)
-
+                
+                if self.verbose:
+                    print('channel', descriptors[0])
+                    print('unit', descriptors[1])
+                
                 channel_i = usid.hdf_utils.create_indexed_group(self.h5_meas_grp,'Channel_')
                 h5_raw = usid.hdf_utils.write_main_dataset(channel_i, #parent HDF5 group
                                                                (self.x_len * self.y_len, 1),  # shape of Main dataset
