@@ -23,7 +23,8 @@ class IgorIBWTranslator(Translator):
     """
 
     def translate(self, file_path, verbose=False, append_path='', 
-                  grp_name='Measurement', parm_encoding='utf-8'):
+                  grp_name='Measurement', parm_encoding='utf-8',
+                  overwrite=True):
         """
         Translates the provided file to .h5
 
@@ -40,6 +41,8 @@ class IgorIBWTranslator(Translator):
         parm_encoding : str, optional
             Codec to be used to decode the bytestrings into Python strings if needed.
             Default 'utf-8'
+        overwrite : bool (Optional)
+            By default will overwrite an existing .H5 file 
 
         Returns
         -------
@@ -54,7 +57,10 @@ class IgorIBWTranslator(Translator):
         if not append_path:
             h5_path = path.join(folder_path, base_name + '.h5')
             if path.exists(h5_path):
-                remove(h5_path)
+                if not overwrite:
+                    raise FileExistsError
+                else:
+                    remove(h5_path)
             h5_file = h5py.File(h5_path, 'w')
         else:
             h5_path = append_path
@@ -144,7 +150,7 @@ class IgorIBWTranslator(Translator):
                 print('unit', chan_unit)
             chan_grp = create_indexed_group(meas_grp, 'Channel')
 
-            write_main_dataset(chan_grp, np.atleast_2d(chan_data), 'Raw_Data',
+            write_main_dataset(chan_grp, np.atleast_2d(chan_data), 'Raw_' + chan_name.replace('-', '_'),
                                chan_name, chan_unit,
                                None, None,
                                h5_pos_inds=h5_pos_inds, h5_pos_vals=h5_pos_vals,
