@@ -297,7 +297,12 @@ class BrukerAFMTranslator(Translator):
         """
         data_vec = read_binary_data(self.file_path, layer_info['Data offset'], layer_info['Data length'],
                                     layer_info['Bytes/pixel'])
-
+        #There's an error with newer versions of Nanoscope where the Bytes/pixel header is incorrect.
+        #If so, attempt to fix and inform user
+        if layer_info['Number of lines']*layer_info['Samps/line'] != len(data_vec):
+            print('It looks like there is a bytes/pixel discrepancy. Attempting to fix')
+            data_vec = read_binary_data(self.file_path, layer_info['Data offset'], layer_info['Data length'], 4)
+        
         # Remove translation specific values from dictionary:
         for key in ['Data offset', 'Data length', 'Bytes/pixel']:
             _ = layer_info.pop(key)
