@@ -59,9 +59,9 @@ class NanonisFile(object):
         _, fname_ext = os.path.splitext(self.fname)
         if fname_ext == '.3ds':
             return 'grid'
-        elif self.fname[-3:] == '.sxm':
+        elif fname_ext == '.sxm':
             return 'scan'
-        elif self.fname[-3:] == '.dat':
+        elif fname_ext == '.dat':
             return 'spec'
         else:
             raise UnhandledFileError(
