@@ -10,6 +10,7 @@ import h5py
 
 from sidpy.sid import Translator
 from sidpy.hdf.hdf_utils import write_simple_attrs
+from sidpy.base.dict_utils import flatten_dict
 
 from pyUSID.io.hdf_utils import create_indexed_group, write_main_dataset,\
     write_ind_val_dsets
@@ -99,6 +100,10 @@ class NanonisTranslatorCorrect(Translator):
             os.remove(self.h5_path)
 
         h5_file = h5py.File(self.h5_path, 'w')
+
+        # flatten measurement parameter dictionary if it is nested
+        if any(isinstance(i,dict) for i in self.parm_dict['meas_parms'].values()):
+            self.parm_dict['meas_parms'] = flatten_dict(self.parm_dict['meas_parms'])
 
         # Create measurement group and assign attributes
         meas_grp = create_indexed_group(h5_file, 'Measurement')
